@@ -1,0 +1,8 @@
+.monitor-state.json
+__pycache__/
+.env
+vhype-monitor.service
+queue-scan.csv
+queue-full.csv
+vhype-widget/
+.claude-logs/
