@@ -110,7 +110,34 @@ Content-Type: application/json
 {"type": "userNonFundingLedgerUpdates", "user": "0x..."}  → ledger events
 ```
 
-### Function Selector Decoding
+### Etherscan V2 API — verified source code (requires API key)
+```
+# Works for HyperEVM (chainid=999) via unified Etherscan V2 endpoint
+# Requires ETHERSCAN_KEY in .env
+
+# Get verified source code + ABI
+GET https://api.etherscan.io/v2/api?chainid=999&module=contract&action=getsourcecode&address={addr}&apikey={key}
+
+# Get ABI only
+GET https://api.etherscan.io/v2/api?chainid=999&module=contract&action=getabi&address={addr}&apikey={key}
+```
+
+For proxy contracts (like vHYPE `0x8888...b20c`), the proxy itself is just ERC1967.
+Query the **implementation address** to get the actual logic source code.
+Find implementation via Blockscout: `GET /smart-contracts/{proxy_addr}` → `implementations[0].address`
+
+### Function Selector Computation
+```python
+# Ethereum uses keccak-256 (NOT NIST SHA3-256)
+from Crypto.Hash import keccak
+k = keccak.new(digest_bits=256)
+k.update(b"functionName(uint256)")
+selector = "0x" + k.hexdigest()[:8]
+```
+
+Gotcha: Python's `hashlib.sha3_256` is NOT keccak-256. Use `pycryptodome` (`Crypto.Hash.keccak`).
+
+### Function Selector Decoding (unknown selectors)
 ```
 # 4byte.directory
 GET https://www.4byte.directory/api/v1/signatures/?hex_signature=0xd2dbb0b0
@@ -129,18 +156,28 @@ GET https://api.openchain.xyz/signature-database/v1/lookup?function=0xd2dbb0b0
 
 ## Reading vHYPE Withdrawal Queue
 
+The contract uses a linked list internally. Legacy `getWithdraw(index)` still works for reading entries, but `getWithdrawQueueLength()` is stale. Use `nextWithdrawId()` and `lastProcessedWithdrawId()` for accurate counts.
+
 ```python
 # getWithdraw(uint256 index) — selector 0x18eaae05
-# data = 0x18eaae05 + index as 64-char hex
 # Response ABI slots (each 64 hex chars):
 #   slot 0: index
 #   slot 1: wallet address (last 40 chars)
 #   slot 2: amount in wei (÷ 1e18 for HYPE)
 #   slot 3: timestamp (unix)
 #   slot 4: batchId (0xfff...f = pending/MAX_UINT256)
+
+# Key selectors (keccak-256):
+#   nextWithdrawId()           0x77ae46e5  — next ID to assign
+#   lastProcessedWithdrawId()  0x8a8ef4e4  — last entry processed in a batch
+#   currentBatchIndex()        0x6090b30e  — current/next batch
+#   totalHypeProcessed()       0x46194d6c  — cumulative HYPE through batches
+#   totalHypeClaimed()         0xf8379728  — cumulative HYPE claimed by users
+#   lastFinalizedBatchTime()   0x1a28c0b5  — timestamp of last finalizeBatch
+#   getBatch(uint256)          0x5ac44282  — batch struct (vhypeProcessed, rate, slashed, finalizedAt)
 ```
 
-Key caveat: `getWithdrawQueueLength()` (0x8de85c59) is STALE. The new `queueWithdraw()` function adds entries beyond this counter. Must forward-scan to find true end (empty entry = wallet 0x0, amount 0, timestamp 0).
+The monitor finds the true queue end by scanning forward from the last known position until it hits an empty entry (wallet=0x0, amount=0).
 
 ## Curl Example
 

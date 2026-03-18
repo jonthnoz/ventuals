@@ -14,9 +14,14 @@ vHYPE is a liquid staking token (LST) for HYPE on Hyperliquid, by Ventuals. Depo
 | `stakingAccountBalance()` | HYPE in HyperCore staking account | = `totalBalance` + HYPE being unstaked in batch lockups. |
 | `spotAccountBalance()` | HYPE in HyperCore spot account | = unclaimed withdrawals (unstaking finished, awaiting user claim). |
 | `exchangeRate()` | vHYPE→HYPE rate (18 decimals) | Should only increase. Decrease = slashing. |
-| `getWithdrawQueueLength()` | Total withdrawal requests ever created | Cumulative — includes completed/cancelled. |
 | `getBatchesLength()` | Total batches ever created | Cumulative. Incrementing = vault actively processing. |
 | `minimumStakeBalance()` | Floor for staking balance | Currently 500,000 HYPE. |
+| `currentBatchIndex()` | Next batch to finalize | If == `getBatchesLength()`, no open batch. |
+| `lastProcessedWithdrawId()` | Last queue entry processed | Compare with `nextWithdrawId()` to count unprocessed. |
+| `nextWithdrawId()` | Next ID to assign | `nextWithdrawId - 1 - lastProcessedWithdrawId` = pending count. |
+| `totalHypeProcessed()` | Cumulative HYPE sent through batches | |
+| `totalHypeClaimed()` | Cumulative HYPE claimed by users | `processed - claimed` = HYPE reserved for unclaimed withdrawals. |
+| `getBatch(index)` | Batch struct | `vhypeProcessed`, `snapshotExchangeRate`, `slashed`, `finalizedAt`. |
 
 **Accounting identity** (verified on-chain):
 
@@ -24,6 +29,7 @@ vHYPE is a liquid staking token (LST) for HYPE on Hyperliquid, by Ventuals. Depo
 stakingAccountBalance = totalBalance + HYPE in active batch lockups
 spotAccountBalance    = HYPE finished unstaking, waiting for users to claim
 staking + spot - totalBalance = total HYPE in the withdrawal pipeline
+totalBalance = (staking + spot + evmBalance) - (totalHypeProcessed - totalHypeClaimed)
 ```
 
 ## Withdrawal Queue
@@ -55,15 +61,19 @@ Queued withdrawals are grouped into batches. Each batch triggers an unstaking op
 
 ### Minimum Stake: 500,000 HYPE
 
-If `stakingAccountBalance` drops to this floor, **all withdrawals pause** until new deposits push it back above.
+`processBatch` enforces the floor in code:
+```
+withdrawCapacity = totalBalance - minimumStakeBalance - alreadyProcessedInBatch
+```
+It processes entries FIFO until capacity runs out, then stops. If the first pending entry exceeds capacity, **zero** entries are processed — the batch finalizes empty. `finalizeBatch` can still run (it handles deposit re-staking and accounting), but no withdrawals move forward.
 
-### Queue Length Caveat
+Withdrawals resume when `totalBalance` rises above 500k (new deposits, team revenue injection, or private LP top-ups). Pending requests stay queued — users can `cancelWithdraw()` to reclaim vHYPE and sell on secondary markets instead.
 
-`getWithdrawQueueLength()` is **stale** — it only tracks entries from the original withdrawal function. The newer `queueWithdraw()` creates entries beyond this counter. `getWithdraw(i)` works for all entries regardless. The monitor finds the true queue end by scanning forward until it hits an empty entry (wallet=0x0, amount=0).
+### Queue Internals
 
-### Pending Detection
+The contract uses a linked list (`nextWithdrawId` / `lastProcessedWithdrawId`) and a legacy `getWithdrawQueueLength()` counter. The legacy counter is **stale** — `queueWithdraw()` creates entries beyond it. The monitor finds the true queue end by scanning forward until it hits an empty entry.
 
-New entries from `queueWithdraw()` have `batchId = MAX_UINT256` (0xfff…f) = **pending**. When the admin calls `processBatch()`, pending entries get assigned a real batchId and HyperCore unstaking starts. The monitor counts entries with `batchId == MAX_UINT256` as pending — these are future TVL drops that haven't been batched yet.
+Pending entries have `batchId = MAX_UINT256`. When `processBatch()` runs, entries get assigned a real batchId. `finalizeBatch()` then triggers HyperCore unstaking for the batch total. The monitor counts MAX_UINT256 entries as pending — these are future TVL drops not yet batched.
 
 ## Exit Safety
 
@@ -98,5 +108,9 @@ Runs as a systemd user service (`vhype-monitor`). Config via `.env` (`TELEGRAM_B
 - **Proxy**: `0x88888880793F89cE85777FF2e0e2d366bf05b20c` (ERC1967)
 - **Implementation**: StakingVaultManager at `0x0000000c21e635b59edff54e70fe21315fa9b245`
 - **HyperCore staking address**: `0x8888888192a4a0593c13532ba48449fc24c3beda`
-- **Chain**: HyperEVM
-- **RPC**: `https://rpc.hyperliquid.xyz/evm` (not archival — always returns latest state regardless of requested block)
+- **vHYPE token**: `0x8888888FdAAc0E7CF8C6523c8955bF7954c216fa`
+- **Chain**: HyperEVM (chainid 999)
+- **RPC**: `https://rpc.hyperliquid.xyz/evm` (not archival — always returns latest state)
+- **Source code**: Verified on hyperevmscan.io. Fetch via Etherscan V2 API (`ETHERSCAN_KEY` in `.env`):
+  `https://api.etherscan.io/v2/api?chainid=999&module=contract&action=getsourcecode&address={impl_addr}&apikey={key}`
+  Query the **implementation** address, not the proxy.
