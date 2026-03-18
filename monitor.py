@@ -256,16 +256,18 @@ def display(data, new_requests=None):
     rate = data["rate"]
     yld = (rate - 1) * 100
 
+    adjusted = data["totalBalance"] - data.get("pendingHype", 0)
+    safe = adjusted - 500_000
+
     print(f"\033[1m[{ts}] vHYPE Vault\033[0m")
     print(f"  TVL (delegated):  {fmt(data['totalBalance'])} HYPE")
+    print(f"  Adjusted TVL:     {fmt(adjusted)} HYPE  (TVL - pending)")
     print(f"  Rate:             {rate:.6f} (+{yld:.3f}%)")
     print(f"  Staking:          {fmt(data['stakingBalance'])} HYPE")
     print(f"  Spot:             {fmt(data['spotBalance'])} HYPE")
     print(f"  Queue:            {data['queueLength']}  (batches: {data['batchCount']})")
     print(f"  Unstaking:        {fmt(data['unstaking'])} HYPE  ({data['nUnstaking']} ops)")
     print(f"  Pending:          {data['pendingCount']} reqs, {fmt(data['pendingHype'])} HYPE")
-
-    safe = data["totalBalance"] - data.get("pendingHype", 0) - 500_000
     print(f"  Exit capacity:    {fmt(safe)} HYPE")
 
     if new_requests:
@@ -292,10 +294,12 @@ def wallet_links(addr):
 
 def vault_recap(data):
     yld = (data["rate"] - 1) * 100
-    safe = data["totalBalance"] - data.get("pendingHype", 0) - 500_000
+    adjusted = data["totalBalance"] - data.get("pendingHype", 0)
+    safe = adjusted - 500_000
     return (
         f"\n———————————————\n"
         f"*TVL* {fmt_tg(data['totalBalance'])} HYPE\n"
+        f"*Adjusted TVL* {fmt_tg(adjusted)} HYPE\n"
         f"*Rate* {data['rate']:.6f} (+{yld:.3f}%)\n"
         f"*Unstaking* {fmt_tg(data['unstaking'])} HYPE ({data['nUnstaking']} ops)\n"
         f"*Pending* {data['pendingCount']} reqs · {fmt_tg(data['pendingHype'])} HYPE\n"
