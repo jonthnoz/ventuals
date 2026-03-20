@@ -42,7 +42,7 @@ SELECTORS = {
 }
 MAX_UINT256 = "f" * 64
 STATE_FILE = Path(__file__).parent / ".monitor-state.json"
-POLL_INTERVAL = 900  # seconds between polls (15min)
+POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", 10800))  # seconds (default: 3h)
 TVL_CHANGE_THRESHOLD = 5000  # HYPE — only alert if TVL moves more than this
 
 # === Telegram ===
